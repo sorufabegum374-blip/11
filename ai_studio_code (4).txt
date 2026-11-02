@@ -1,0 +1,460 @@
+import { useState, useMemo } from 'react';
+import { Link } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import {
+  Boxes,
+  Code2,
+  Download,
+  FileCode,
+  Loader2,
+  Palette,
+  Package,
+  Sun,
+  Save,
+  Wrench,
+  Smartphone,
+  Share2,
+  Edit3,
+} from 'lucide-react';
+import { AppShell } from '@/components/app-shell';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import { supabase } from '@/integrations/supabase/client';
+import { buildArchive } from '@/lib/minecraft/archive';
+import { saveNewProject, saveNewVersion, type SavedProject } from '@/lib/minecraft/saved-projects';
+import { savedProjectsKey } from '@/components/saved-projects';
+import type { PackFile } from '@/lib/minecraft/pack';
+import { validatePack } from '@/lib/minecraft/validate';
+import { normalizeVersion } from '@/lib/minecraft/pack';
+import { autoRepairPack } from '@/lib/minecraft/repair';
+import {
+  evaluatePackQuality,
+  type DeviceTestEvidence,
+} from '@/lib/minecraft/quality-gate';
+import {
+  analyzePerformance,
+  type PerformanceTier,
+} from '@/lib/minecraft/performance';
+import { PerformanceCard } from '@/components/minecraft/performance-card';
+import { AndroidModal } from '@/components/minecraft/android-modal';
+import { CurseForgeModal } from '@/components/minecraft/curseforge-modal';
+import { FileEditor } from '@/components/minecraft/file-editor';
+
+type Kind = 'resource' | 'behavior' | 'addon' | 'shader' | 'script';
+type Pack = { name: string; description: string; files: PackFile[] };
+
+const KINDS: { id: Kind; label: string; hint: string; icon: typeof Palette; example: string }[] = [
+  { id: 'resource', label: 'Resource pack', hint: 'Textures, sounds, UI text', icon: Palette, example: 'Rename diamonds to "Crystals" and make the sky look warmer at sunset' },
+  { id: 'behavior', label: 'Behavior pack', hint: 'Mobs, items, recipes', icon: FileCode, example: 'Add a crafting recipe for saddles and make zombies drop feathers' },
+  { id: 'addon', label: 'Full add-on', hint: 'Blocks, items, mobs, armor', icon: Boxes, example: 'A friendly "Nova Golem" mob that follows players and drops glowstone' },
+  { id: 'script', label: 'Script API', hint: 'JavaScript gameplay', icon: Code2, example: 'Show a welcome form when a player joins and give them a starter kit' },
+  { id: 'shader', label: 'Shaders', hint: 'Fog, lighting, water', icon: Sun, example: 'Cinematic shaders with golden sunsets, misty fog and clear blue water' },
+];
+
+export function PackCreatorPage() {
+  const [kind, setKind] = useState<Kind>('addon');
+  const [idea, setIdea] = useState('');
+  const [version, setVersion] = useState('1.26.60');
+  const [selectedTier, setSelectedTier] = useState<PerformanceTier>('Medium');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [pack, setPack] = useState<Pack | null>(null);
+  const [openFile, setOpenFile] = useState<string | null>(null);
+  const [editingFile, setEditingFile] = useState<PackFile | null>(null);
+  const [saved, setSaved] = useState<SavedProject | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testEvidence, setTestEvidence] = useState<DeviceTestEvidence | null>(null);
+
+  // Modals
+  const [showAndroidModal, setShowAndroidModal] = useState(false);
+  const [showCurseForgeModal, setShowCurseForgeModal] = useState(false);
+
+  const qc = useQueryClient();
+
+  const currentFiles = useMemo(() => pack?.files ?? [], [pack]);
+
+  // Static validation report
+  const validationReport = useMemo(() => {
+    if (!pack) return { errors: [], warnings: [] };
+    return validatePack(pack.files, normalizeVersion(version), kind);
+  }, [pack, version, kind]);
+
+  // Quality evaluation
+  const quality = useMemo(() => {
+    return evaluatePackQuality(currentFiles, validationReport, testEvidence);
+  }, [currentFiles, validationReport, testEvidence]);
+
+  // Performance profile
+  const performanceAnalysis = useMemo(() => {
+    return analyzePerformance(currentFiles, selectedTier);
+  }, [currentFiles, selectedTier]);
+
+  async function generate(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    setPack(null);
+    setSaved(null);
+    setTestEvidence(null);
+
+    try {
+      const { data: s } = await supabase.auth.getSession();
+      if (!s.session) throw new Error('Please sign in to create packs.');
+      const res = await fetch('/api/pack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.session.access_token}` },
+        body: JSON.stringify({ kind, idea, version }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Pack generation failed.');
+      setPack(data.pack);
+      setOpenFile(data.pack.files[0]?.path ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Pack generation failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleAutoRepair() {
+    if (!pack) return;
+    const result = autoRepairPack(pack.files, version, kind);
+    setPack({ ...pack, files: result.repairedFiles });
+    toast.success(`Repaired ${result.fixedIssues.length} issue(s)`);
+  }
+
+  function handleSaveEditedFile(path: string, newContent: string) {
+    if (!pack) return;
+    const nextFiles = pack.files.map((f) => (f.path === path ? { ...f, content: newContent } : f));
+    setPack({ ...pack, files: nextFiles });
+    toast.success(`Saved changes to ${path}`);
+  }
+
+  async function save(asNewVersion: boolean) {
+    if (!pack || saving) return;
+    setSaving(true);
+    try {
+      const snap = { name: pack.name, description: pack.description, kind, files: pack.files };
+      if (asNewVersion && saved) {
+        const v = await saveNewVersion(supabase, saved, snap, version, idea.slice(0, 200));
+        setSaved({ ...saved, latest_version: v.version });
+        toast.success(`Saved as version ${v.version}`);
+      } else {
+        const p = await saveNewProject(supabase, snap, version, idea.slice(0, 200));
+        setSaved(p);
+        toast.success(`Saved "${p.name}" to your projects`);
+      }
+      void qc.invalidateQueries({ queryKey: savedProjectsKey });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save project.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function download() {
+    if (!pack) return;
+    const blob = await buildArchive(pack.files, kind === 'addon');
+    const ext = kind === 'addon' ? 'mcaddon' : 'mcpack';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${pack.name.replace(/[^\w-]+/g, '_') || 'nova_pack'}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const currentFileObj = pack?.files.find((f) => f.path === openFile);
+
+  return (
+    <AppShell threads={[]} onNewChat={() => {}} onSelectThread={() => {}} activeThreadId={null}>
+      <div className="h-full overflow-y-auto">
+        <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+          <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                <Package className="h-6 w-6" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">Pack Creator Studio</h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Build, profile, repair, and export publishing-ready Minecraft Bedrock packs.
+                </p>
+              </div>
+            </div>
+
+            {pack && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Quality Status:</span>
+                <Badge
+                  className={cn(
+                    'px-2.5 py-1 text-xs font-semibold',
+                    quality.status === 'REAL DEVICE TESTED' && 'bg-emerald-500 text-white',
+                    quality.status === 'READY' && 'bg-primary text-primary-foreground',
+                    quality.status === 'READY WITH WARNINGS' && 'bg-amber-500 text-black',
+                    quality.status === 'FAILED' && 'bg-destructive text-destructive-foreground'
+                  )}
+                >
+                  {quality.status}
+                </Badge>
+              </div>
+            )}
+          </header>
+
+          <form onSubmit={generate} className="space-y-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              {KINDS.map((k) => {
+                const Icon = k.icon;
+                return (
+                  <button
+                    type="button"
+                    key={k.id}
+                    onClick={() => setKind(k.id)}
+                    className={cn(
+                      'rounded-2xl border p-4 text-left transition-all',
+                      kind === k.id
+                        ? 'border-primary bg-primary/10 nova-glow-sm'
+                        : 'border-border bg-card/60 hover:border-primary/40'
+                    )}
+                  >
+                    <Icon className="mb-3 h-5 w-5 text-primary" />
+                    <p className="text-sm font-medium">{k.label}</p>
+                    <p className="text-xs text-muted-foreground">{k.hint}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            <Textarea
+              value={idea}
+              onChange={(e) => setIdea(e.target.value)}
+              rows={4}
+              placeholder={KINDS.find((k) => k.id === kind)!.example}
+              aria-label="Pack idea"
+            />
+
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <label className="grid gap-2 text-xs font-medium">
+                Target Bedrock Version
+                <Input
+                  value={version}
+                  onChange={(e) => setVersion(e.target.value)}
+                  className="w-40"
+                  placeholder="1.26.60"
+                />
+              </label>
+
+              <Button
+                type="submit"
+                disabled={busy || !idea.trim()}
+                className="nova-gradient nova-glow-sm hover:opacity-95"
+              >
+                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {busy ? 'Compiling Pack Architecture…' : 'Generate Pack'}
+              </Button>
+            </div>
+          </form>
+
+          {error && (
+            <p role="alert" className="mt-5 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+
+          {pack && (
+            <section className="mt-8 space-y-6">
+              {/* Performance Card */}
+              <PerformanceCard
+                analysis={performanceAnalysis}
+                selectedTier={selectedTier}
+                onSelectTier={setSelectedTier}
+              />
+
+              {/* Workspace */}
+              <div className="rounded-2xl border border-border bg-card/60 p-5">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-medium">{pack.name}</h2>
+                    <p className="text-sm text-muted-foreground">{pack.description}</p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAutoRepair}
+                      className="gap-1.5"
+                    >
+                      <Wrench className="h-4 w-4 text-primary" /> Auto Repair
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowAndroidModal(true)}
+                      className="gap-1.5"
+                    >
+                      <Smartphone className="h-4 w-4" /> Android Testing
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowCurseForgeModal(true)}
+                      className="gap-1.5"
+                    >
+                      <Share2 className="h-4 w-4" /> CurseForge Export
+                    </Button>
+
+                    {saved && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={saving}
+                        onClick={() => void save(true)}
+                        className="gap-1.5"
+                      >
+                        <Save className="h-4 w-4" /> Save as v{saved.latest_version + 1}
+                      </Button>
+                    )}
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={saving}
+                      onClick={() => void save(false)}
+                      className="gap-1.5"
+                    >
+                      <Save className="h-4 w-4" /> {saved ? 'Save Copy' : 'Save'}
+                    </Button>
+
+                    <Button size="sm" onClick={download} className="gap-1.5 nova-gradient">
+                      <Download className="h-4 w-4" /> Download .{kind === 'addon' ? 'mcaddon' : 'mcpack'}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Validation Banner */}
+                <div className="mb-4 space-y-1 rounded-lg border border-border bg-background/60 p-3 text-xs">
+                  <p className="font-semibold text-foreground">
+                    {validationReport.errors.length > 0
+                      ? `✕ ${validationReport.errors.length} Blocking Error(s)`
+                      : '✓ Static Verification Passed'}
+                  </p>
+                  {validationReport.errors.map((x, i) => (
+                    <p key={i} className="text-destructive">• {x}</p>
+                  ))}
+                  {validationReport.warnings.map((x, i) => (
+                    <p key={i} className="text-muted-foreground">• {x}</p>
+                  ))}
+                </div>
+
+                {/* File Tree & Content */}
+                <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+                  <div className="space-y-1">
+                    <p className="px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Package Assets ({pack.files.length})
+                    </p>
+                    <ul className="max-h-[460px] overflow-auto space-y-1">
+                      {pack.files.map((f) => (
+                        <li key={f.path} className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setOpenFile(f.path)}
+                            className={cn(
+                              'flex-1 truncate rounded-md px-2 py-1.5 text-left font-mono text-xs transition-colors',
+                              openFile === f.path
+                                ? 'bg-primary/15 text-foreground font-semibold'
+                                : 'text-muted-foreground hover:bg-secondary'
+                            )}
+                          >
+                            {f.path}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingFile(f)}
+                            className="p-1 text-muted-foreground hover:text-foreground"
+                            title="Edit file"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex items-center justify-between border-b border-border pb-2 mb-2">
+                      <p className="font-mono text-xs text-muted-foreground truncate">{openFile}</p>
+                      {currentFileObj && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditingFile(currentFileObj)}
+                          className="h-7 text-xs gap-1"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" /> Edit
+                        </Button>
+                      )}
+                    </div>
+                    {currentFileObj?.encoding === 'base64' ? (
+                      <div className="flex items-center justify-center rounded-lg bg-background p-6">
+                        <img
+                          src={`data:image/png;base64,${currentFileObj.content}`}
+                          alt={currentFileObj.path}
+                          className="h-32 w-32 [image-rendering:pixelated] border border-border rounded"
+                        />
+                      </div>
+                    ) : (
+                      <pre className="max-h-[440px] overflow-auto rounded-lg bg-background p-4 text-xs font-mono">
+                        <code>{currentFileObj?.content}</code>
+                      </pre>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Modals */}
+          {pack && (
+            <>
+              <AndroidModal
+                open={showAndroidModal}
+                onOpenChange={setShowAndroidModal}
+                packName={pack.name}
+                onDownloadPack={download}
+                onSubmitEvidence={(evidence) => {
+                  setTestEvidence(evidence);
+                  toast.success('Certified as REAL DEVICE TESTED');
+                }}
+              />
+
+              <CurseForgeModal
+                open={showCurseForgeModal}
+                onOpenChange={setShowCurseForgeModal}
+                packName={pack.name}
+                packDescription={pack.description}
+                version={version}
+                files={pack.files}
+                isAddon={kind === 'addon'}
+              />
+
+              <FileEditor
+                open={Boolean(editingFile)}
+                onOpenChange={(o) => !o && setEditingFile(null)}
+                file={editingFile}
+                onSaveFile={handleSaveEditedFile}
+              />
+            </>
+          )}
+        </main>
+      </div>
+    </AppShell>
+  );
+}

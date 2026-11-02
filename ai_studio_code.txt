@@ -1,0 +1,19 @@
+novatestv1-main/
+├── src/
+│   ├── lib/
+│   │   └── minecraft/
+│   │       ├── quality-gate.ts      # Quality status state machine & transition rules
+│   │       ├── performance.ts       # 4-tier performance profiler (Low, Med, High, Ultra)
+│   │       ├── android-testing.ts   # Android 11 / A10 guided testing checklist & report models
+│   │       ├── curseforge.ts        # Publishing-ready CurseForge packaging & metadata
+│   │       └── repair.ts            # Auto-repair engine resolving manifests, paths, and textures
+│   ├── components/
+│   │   └── minecraft/
+│   │       ├── performance-card.tsx # RAM, texture memory, and particle budget inspector
+│   │       ├── android-modal.tsx    # Step-by-step Android import and testing drawer
+│   │       ├── curseforge-modal.tsx # CurseForge project metadata & bundle generator
+│   │       └── file-editor.tsx      # In-browser asset browser & file inspector
+│   ├── test/
+│   │   └── part2-engine.test.ts     # Automated test suite for Part 2 requirements
+│   └── components/pages/
+│       └── pack-creator-page.tsx    # Upgraded Advanced Pack Creator UI

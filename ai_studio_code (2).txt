@@ -1,0 +1,111 @@
+import { useState } from 'react';
+import { Package, Download, Loader2, ShieldCheck } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import type { PackFile } from '@/lib/minecraft/pack';
+import { buildCurseForgeBundle, generateCurseForgeDescription } from '@/lib/minecraft/curseforge';
+
+interface CurseForgeModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  packName: string;
+  packDescription: string;
+  version: string;
+  files: PackFile[];
+  isAddon: boolean;
+}
+
+export function CurseForgeModal({
+  open,
+  onOpenChange,
+  packName,
+  packDescription,
+  version,
+  files,
+  isAddon,
+}: CurseForgeModalProps) {
+  const [license, setLicense] = useState('MIT / Attribution Required');
+  const [author, setAuthor] = useState('Habib (Flicxo)');
+  const [busy, setBusy] = useState(false);
+
+  const handleExport = async () => {
+    setBusy(true);
+    try {
+      const markdown = generateCurseForgeDescription(packName, packDescription, version, license);
+      const zipBlob = await buildCurseForgeBundle(
+        files,
+        {
+          projectName: packName,
+          summary: packDescription.slice(0, 250),
+          descriptionMarkdown: markdown,
+          gameVersions: [version],
+          license,
+          authors: [author],
+          category: isAddon ? 'Add-Ons' : 'Customization',
+          releaseType: 'release',
+        },
+        isAddon
+      );
+
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${packName.replace(/[^\w-]+/g, '_').toLowerCase()}_curseforge_release.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      onOpenChange(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Package className="h-5 w-5 text-primary" />
+            CurseForge Publication Package
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            Generates a validated distribution ZIP containing your <code>.mcaddon/.mcpack</code>, clean README, CurseForge metadata, and changelog.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-2 text-xs">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Pack Author Credit</Label>
+            <Input value={author} onChange={(e) => setAuthor(e.target.value)} className="h-8 text-xs" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">License Specification</Label>
+            <Input value={license} onChange={(e) => setLicense(e.target.value)} className="h-8 text-xs" />
+          </div>
+
+          <div className="rounded-lg border border-border bg-card/60 p-3 space-y-1 text-muted-foreground">
+            <p className="flex items-center gap-1 font-medium text-foreground">
+              <ShieldCheck className="h-4 w-4 text-emerald-400" /> Compliance Check:
+            </p>
+            <p>• Correct manifests and non-colliding UUIDs</p>
+            <p>• Safe forward-slash paths and validated JSON structure</p>
+            <p>• Not officially endorsed by CurseForge / Overwolf</p>
+          </div>
+
+          <Button onClick={handleExport} disabled={busy} className="w-full gap-2 nova-gradient">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Build & Download CurseForge ZIP
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

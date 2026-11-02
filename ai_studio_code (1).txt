@@ -1,0 +1,174 @@
+import { useState } from 'react';
+import { Smartphone, CheckCircle, AlertOctagon, CheckSquare, Square, Download, Send } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  ANDROID_A10_IMPORT_STEPS,
+  ANDROID_TEST_CHECKLIST,
+} from '@/lib/minecraft/android-testing';
+import type { DeviceTestEvidence } from '@/lib/minecraft/quality-gate';
+
+interface AndroidModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  packName: string;
+  onDownloadPack: () => void;
+  onSubmitEvidence: (evidence: DeviceTestEvidence) => void;
+}
+
+export function AndroidModal({
+  open,
+  onOpenChange,
+  packName,
+  onDownloadPack,
+  onSubmitEvidence,
+}: AndroidModalProps) {
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [imported, setImported] = useState(false);
+  const [crashed, setCrashed] = useState(false);
+  const [notes, setNotes] = useState('');
+
+  const toggleCheck = (id: string) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSubmit = () => {
+    onSubmitEvidence({
+      verifiedByUserId: 'authenticated_user',
+      deviceModel: 'Samsung Galaxy A10 (SM-A105F, 32-bit)',
+      osVersion: 'Android 11',
+      importedSuccessfully: imported,
+      checklistPassedCount: checkedIds.size,
+      checklistTotalCount: ANDROID_TEST_CHECKLIST.length,
+      crashOccurred: crashed,
+      notes: notes.trim(),
+      testDate: new Date().toISOString(),
+    });
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Smartphone className="h-5 w-5 text-primary" />
+            Android Real Device Guided Testing
+          </DialogTitle>
+          <DialogDescription>
+            Target Hardware: <strong>Samsung Galaxy A10 (Android 11, 32-bit)</strong>. No PC or USB connection required.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Import guide */}
+        <div className="space-y-3 rounded-xl border border-border bg-card/60 p-4 text-xs">
+          <p className="font-semibold text-foreground">Import Protocol (Without PC):</p>
+          {ANDROID_A10_IMPORT_STEPS.map((s) => (
+            <div key={s.id} className="space-y-0.5">
+              <p className="font-medium text-foreground">{s.title}</p>
+              <p className="text-muted-foreground">{s.instruction}</p>
+              {s.warning && <p className="text-amber-400">⚠️ {s.warning}</p>}
+            </div>
+          ))}
+          <Button size="sm" onClick={onDownloadPack} className="mt-2 w-full gap-2">
+            <Download className="h-4 w-4" /> Download to Test on Device
+          </Button>
+        </div>
+
+        {/* Verification gates */}
+        <div className="space-y-3 pt-2">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            In-Game Testing Checklist:
+          </p>
+          <div className="grid gap-2">
+            {ANDROID_TEST_CHECKLIST.map((item) => {
+              const active = checkedIds.has(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => toggleCheck(item.id)}
+                  className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+                    active ? 'border-primary/50 bg-primary/10' : 'border-border bg-background/50 hover:bg-background'
+                  }`}
+                >
+                  {active ? (
+                    <CheckSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  ) : (
+                    <Square className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <div>
+                    <p className="text-xs font-medium text-foreground">{item.label}</p>
+                    <p className="text-[11px] text-muted-foreground">{item.expectedBehavior}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Outcome switches */}
+        <div className="space-y-3 border-t border-border pt-4">
+          <div className="flex items-center justify-between text-xs">
+            <span>Did Minecraft successfully show "Import Finished"?</span>
+            <button
+              type="button"
+              onClick={() => setImported(!imported)}
+              className={`rounded px-3 py-1 font-medium ${
+                imported ? 'bg-emerald-500 text-white' : 'bg-secondary text-muted-foreground'
+              }`}
+            >
+              {imported ? 'Yes, Imported' : 'No / Failed'}
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between text-xs">
+            <span>Did Minecraft crash, freeze or close during testing?</span>
+            <button
+              type="button"
+              onClick={() => setCrashed(!crashed)}
+              className={`rounded px-3 py-1 font-medium ${
+                crashed ? 'bg-destructive text-destructive-foreground' : 'bg-secondary text-muted-foreground'
+              }`}
+            >
+              {crashed ? 'Crash Occurred' : 'No Crashes'}
+            </button>
+          </div>
+
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Observed frame-rate, content-log warnings, or behavior notes on the A10..."
+            className="text-xs"
+            rows={2}
+          />
+
+          <Button
+            onClick={handleSubmit}
+            disabled={!imported || crashed}
+            className="w-full gap-2 nova-gradient"
+          >
+            <Send className="h-4 w-4" /> Certify as REAL DEVICE TESTED
+          </Button>
+          {(!imported || crashed) && (
+            <p className="text-center text-[11px] text-muted-foreground">
+              Real device certification requires successful import without crashes.
+            </p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
