@@ -1,0 +1,71 @@
+import { useState } from 'react';
+import { FileCode, Save } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import type { PackFile } from '@/lib/minecraft/pack';
+
+interface FileEditorProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  file: PackFile | null;
+  onSaveFile: (path: string, newContent: string) => void;
+}
+
+export function FileEditor({ open, onOpenChange, file, onSaveFile }: FileEditorProps) {
+  const [content, setContent] = useState(file?.content ?? '');
+
+  if (!file) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm font-mono truncate">
+            <FileCode className="h-4 w-4 text-primary" />
+            {file.path}
+          </DialogTitle>
+        </DialogHeader>
+
+        {file.encoding === 'base64' ? (
+          <div className="flex flex-col items-center justify-center p-8 bg-background/50 rounded-lg">
+            <img
+              src={`data:image/png;base64,${file.content}`}
+              alt={file.path}
+              className="h-32 w-32 [image-rendering:pixelated] border border-border rounded"
+            />
+            <p className="mt-3 text-xs text-muted-foreground">Binary PNG Texture Asset</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <Textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="font-mono text-xs max-h-[500px] h-[380px]"
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  onSaveFile(file.path, content);
+                  onOpenChange(false);
+                }}
+                className="gap-1.5 nova-gradient"
+              >
+                <Save className="h-3.5 w-3.5" /> Save Changes
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
